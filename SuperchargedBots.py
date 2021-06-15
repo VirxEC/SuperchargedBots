@@ -164,6 +164,10 @@ class SuperchargedBots(BaseScript):
     def input_change(self, change: PlayerInputChange, seconds: float, frame_num: int):
         try:
             game_car = self.packet.game_cars[change.PlayerIndex()]
+
+            if game_car.name not in self.tracker:
+                return
+
             controller_state = change.ControllerState()
             self.tracker[game_car.name]['boosting'] = controller_state.Boost()
             self.tracker[game_car.name]['steering'] = (game_car.has_wheel_contact and controller_state.Steer() > 0.2) or (not game_car.has_wheel_contact and (controller_state.Yaw() > 0.2 or controller_state.Pitch() > 0.2))
