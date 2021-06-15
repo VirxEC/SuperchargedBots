@@ -18,10 +18,10 @@ from rlbot.utils.structures.game_data_struct import GameTickPacket
 BOOST_ACCEL = 991 + 2/3
 BOOST_CONSUMPTION = 33 + 1/3
 DEFAULT_CAR = {
-    "boost_bonus": 0,
     "boosting": False,
     "steering": False,
-    "last_boost": 32
+    "total_boost": BOOST_CONSUMPTION,
+    "last_boost": BOOST_CONSUMPTION
 }
 
 def cap(x, low, high):
@@ -59,8 +59,8 @@ class SuperchargedBots(BaseScript):
         self.bonus_boost_accel_percent = float(self.config.get("Options", "bonus_boost_accel_percent")) / 100
         print(f"SuperchargedBots: bonus_boost_accel_percent = {self.bonus_boost_accel_percent * 100}%")
 
-        self.bonus_boost_tank_percent = float(self.config.get("Options", "bonus_boost_tank_percent")) / 100
-        print(f"SuperchargedBots: bonus_boost_tank_percent = {self.bonus_boost_tank_percent * 100}%")
+        self.bonus_boost_tank = float(self.config.get("Options", "bonus_boost_tank"))
+        print(f"SuperchargedBots: bonus_boost_tank = {self.bonus_boost_tank}")
 
         self.minimum_boost = int(self.config.get("Options", "minimum_boost"))
         print(f"SuperchargedBots: minimum_boost = {self.minimum_boost}")
@@ -87,14 +87,20 @@ class SuperchargedBots(BaseScript):
                     if car.name not in self.tracker:
                         self.tracker[car.name] = DEFAULT_CAR.copy()
 
-                    if not self.packet.game_info.is_round_active or self.packet.game_info.is_kickoff_pause or (self.bots_only and not car.is_bot) or car.team not in self.teams:
-                        self.tracker[car.name]['boost_bonus'] = 0
-                        self.tracker[car.name]['last_boost'] = car.boost
+                    if (self.bots_only and not car.is_bot) or car.team not in self.teams:
+                        continue
+
+                    if not self.packet.game_info.is_round_active:
+                        continue
+
+                    if self.packet.game_info.is_kickoff_pause:
+                        self.tracker[car.name]['total_boost'] = BOOST_CONSUMPTION
+                        self.tracker[car.name]['last_boost'] = BOOST_CONSUMPTION
                         continue
 
                     velocity = None
                     if self.tracker[car.name]['boosting']:
-                        if not self.tracker[car.name]['steering'] and (self.minimum_boost > 0 or car.boost > 0):
+                        if not self.tracker[car.name]['steering'] and (car.boost > self.minimum_boost):
                             CP = math.cos(car.physics.rotation.pitch)
                             SP = math.sin(car.physics.rotation.pitch)
                             CY = math.cos(car.physics.rotation.yaw)
@@ -102,22 +108,23 @@ class SuperchargedBots(BaseScript):
                             forward = Vector(CP*CY, CP*SY, SP)
                             velocity = Vector.from_vector(car.physics.velocity) + forward * (BOOST_ACCEL * self.delta_time * self.bonus_boost_accel_percent)
 
-                        self.tracker[car.name]['boost_bonus'] += BOOST_CONSUMPTION * self.delta_time * self.bonus_boost_tank_percent
-                    else:
-                        self.tracker[car.name]['boost_bonus'] = 0
+                        self.tracker[car.name]['total_boost'] -= BOOST_CONSUMPTION * self.delta_time * (100 / self.bonus_boost_tank)
 
                     boost_amount = None
-                    if car.boost > self.minimum_boost and car.boost > self.tracker[car.name]['last_boost']:
-                        boost_amount = cap(car.boost + ((car.boost - self.tracker[car.name]['last_boost']) * 2), 0, 100)
-                        self.tracker[car.name]['boost_bonus'] = 0
-                    elif self.tracker[car.name]['boost_bonus'] >= 1:
-                        boost_amount = cap(car.boost + 1, 0, 100)
-                        self.tracker[car.name]['boost_bonus'] -= 1
-                    elif car.boost < self.minimum_boost:
-                        boost_amount = self.minimum_boost
-                        self.tracker[car.name]['boost_bonus'] = 0
 
+                    if car.boost > self.minimum_boost and car.boost > self.tracker[car.name]['last_boost']:
+                        self.tracker[car.name]['total_boost'] += car.boost - self.tracker[car.name]['last_boost']
+                    elif car.boost < self.minimum_boost:
+                        self.tracker[car.name]['total_boost'] = self.minimum_boost
+                    
+                    self.tracker[car.name]['total_boost'] = cap(self.tracker[car.name]['total_boost'], 0, 100)
+                    floored_boost = math.floor(self.tracker[car.name]['total_boost'])
+                    if floored_boost != car.boost:
+                        boost_amount = floored_boost
                     self.tracker[car.name]['last_boost'] = car.boost if boost_amount is None else boost_amount
+
+                    if velocity is None and boost_amount is None:
+                        continue
 
                     cars[car_index] = CarState(
                         Physics(
@@ -136,7 +143,7 @@ class SuperchargedBots(BaseScript):
             game_car = self.packet.game_cars[change.PlayerIndex()]
             controller_state = change.ControllerState()
             self.tracker[game_car.name]['boosting'] = controller_state.Boost()
-            self.tracker[game_car.name]['steering'] = (game_car.has_wheel_contact and controller_state.Steer() > 0.25) or (not game_car.has_wheel_contact and (controller_state.Yaw() > 0.25 or controller_state.Pitch() > 0.25))
+            self.tracker[game_car.name]['steering'] = (game_car.has_wheel_contact and controller_state.Steer() > 0.2) or (not game_car.has_wheel_contact and (controller_state.Yaw() > 0.2 or controller_state.Pitch() > 0.2))
         except Exception:
             print_exc()
 
