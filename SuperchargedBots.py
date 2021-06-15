@@ -32,16 +32,26 @@ class SuperchargedBots(BaseScript):
     def __init__(self):
         super().__init__("SuperchargedBots")
         self.packet = None
+        self.last_packet_time = -1
         self.time = 0
         self.delta_time = -1
         self.tracker = {}
 
+    def set_config(self, path):
+        self.config = configparser.ConfigParser()
+        self.config.read(path)
+
     def get_bool_from_config(self, section, option):
         return True if self.config.get(section, option).lower() in {"true", "1"} else False
 
+    def get_float_from_config(self, section, option):
+        return float(self.config.get(section, option))
+
+    def get_int_from_config(self, section, option):
+        return int(self.get_float_from_config(section, option))
+
     def main(self):
-        self.config = configparser.ConfigParser()
-        self.config.read(os.path.join(os.path.dirname(os.path.realpath(__file__)), "SuperchargedBots.cfg"))
+        self.set_config(os.path.join(os.path.dirname(os.path.realpath(__file__)), "SuperchargedBots.cfg"))
 
         self.teams = []
 
@@ -56,13 +66,13 @@ class SuperchargedBots(BaseScript):
         self.bots_only = self.get_bool_from_config("Options", "bots_only")
         print(f"SuperchargedBots: bots_only = {self.bots_only}")
 
-        self.bonus_boost_accel_percent = float(self.config.get("Options", "bonus_boost_accel_percent")) / 100
+        self.bonus_boost_accel_percent = self.get_float_from_config("Options", "bonus_boost_accel_percent") / 100
         print(f"SuperchargedBots: bonus_boost_accel_percent = {self.bonus_boost_accel_percent * 100}%")
 
-        self.bonus_boost_tank = float(self.config.get("Options", "bonus_boost_tank"))
+        self.bonus_boost_tank = self.get_int_from_config("Options", "bonus_boost_tank")
         print(f"SuperchargedBots: bonus_boost_tank = {self.bonus_boost_tank}")
 
-        self.minimum_boost = int(self.config.get("Options", "minimum_boost"))
+        self.minimum_boost = self.get_int_from_config("Options", "minimum_boost")
         print(f"SuperchargedBots: minimum_boost = {self.minimum_boost}")
 
         self.socket_relay = SocketRelay()
@@ -79,16 +89,19 @@ class SuperchargedBots(BaseScript):
                 self.delta_time = time - self.time
                 self.time = time
 
+                supercharged_bots = []
                 cars = dict()
 
                 for car_index in range(self.packet.num_cars):
                     car = self.packet.game_cars[car_index]
 
+                    if (self.bots_only and not car.is_bot) or car.team not in self.teams:
+                        continue
+
                     if car.name not in self.tracker:
                         self.tracker[car.name] = DEFAULT_CAR.copy()
 
-                    if (self.bots_only and not car.is_bot) or car.team not in self.teams:
-                        continue
+                    supercharged_bots.append(car.name)
 
                     if not self.packet.game_info.is_round_active:
                         continue
@@ -135,6 +148,16 @@ class SuperchargedBots(BaseScript):
 
                 if cars:
                     self.set_game_state(GameState(cars=cars))
+
+                if self.last_packet_time == -1 or self.time - self.last_packet_time >= 0.1:
+                    self.matchcomms.outgoing_broadcast.put_nowait({
+                        "supercharged_bots": supercharged_bots,
+                        "supercharged_config": {
+                            "bonus_boost_accel_percent": self.bonus_boost_accel_percent,
+                            "bonus_boost_tank": self.bonus_boost_tank,
+                            "minimum_boost": self.minimum_boost
+                        }
+                    })
             except Exception:
                 print_exc()
 
